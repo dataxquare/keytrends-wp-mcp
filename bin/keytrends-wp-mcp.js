@@ -33938,16 +33938,16 @@ class StdioServerTransport {
 
 // src/env.ts
 function envConfig() {
-  const baseUrlRaw = process.env.WORDPRESS_BASE_URL;
-  const username = process.env.WORDPRESS_USERNAME;
-  const appPassword = process.env.WORDPRESS_APPLICATION_PASSWORD;
+  const baseUrlRaw = process.env.WORDPRESS_BASE_URL || process.env.BASE_URL || process.env.WP_BASE_URL || process.env.WP_API_URL;
+  const username = process.env.WORDPRESS_USERNAME || process.env.USERNAME || process.env.WP_USERNAME || process.env.WP_USER || process.env.WP_API_USERNAME;
+  const appPassword = process.env.WORDPRESS_APPLICATION_PASSWORD || process.env.APPLICATION_PASSWORD || process.env.WP_APPLICATION_PASSWORD || process.env.WP_APP_PASSWORD || process.env.WP_API_PASSWORD;
   const missing = [];
   if (!baseUrlRaw)
-    missing.push("WORDPRESS_BASE_URL");
+    missing.push("WORDPRESS_BASE_URL (o BASE_URL)");
   if (!username)
-    missing.push("WORDPRESS_USERNAME");
+    missing.push("WORDPRESS_USERNAME (o USERNAME)");
   if (!appPassword)
-    missing.push("WORDPRESS_APPLICATION_PASSWORD");
+    missing.push("WORDPRESS_APPLICATION_PASSWORD (o APPLICATION_PASSWORD)");
   if (missing.length > 0) {
     throw new Error(`[keytrends-wp-mcp] Faltan variables de entorno obligatorias: ${missing.join(", ")}`);
   }
