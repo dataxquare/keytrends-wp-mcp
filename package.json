@@ -1,0 +1,33 @@
+{
+  "name": "keytrends-wp-mcp",
+  "version": "1.0.0",
+  "description": "Keytrends Model Context Protocol (MCP) server for WordPress REST API — full post CRUD, author assignment, categories and draft scheduling.",
+  "type": "module",
+  "bin": {
+    "keytrends-wp-mcp": "./bin/keytrends-wp-mcp.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun build src/index.ts --target=node --outfile=bin/keytrends-wp-mcp.js && chmod +x bin/keytrends-wp-mcp.js",
+    "smoke": "bun test/smoke.ts"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "wordpress",
+    "keytrends",
+    "rest-api",
+    "publishing",
+    "automation"
+  ],
+  "author": "Keytrends",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  }
+}
