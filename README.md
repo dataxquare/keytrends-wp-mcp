@@ -26,6 +26,16 @@ Diseñado para resolver las limitaciones de los conectores genéricos de WordPre
 
 No requiere instalación manual previa. Puedes ejecutarlo directamente con `npx`:
 
+### Commit fijado (obligatorio en Cognitiv)
+
+Sustituye `<COMMIT>` por el SHA vigente antes de pegar la configuración:
+
+```bash
+git ls-remote https://github.com/iDankest/keytrends-wp-mcp HEAD
+```
+
+Tiene que ser un **commit**, no una rama ni una etiqueta: una etiqueta se puede mover con force-push y entonces instalarías otra versión sin enterarte. El host de agentes de Cognitiv rechaza directamente las especificaciones sin commit fijado.
+
 ### 1. Claude Desktop
 
 Añade lo siguiente a tu archivo `claude_desktop_config.json`:
@@ -35,7 +45,7 @@ Añade lo siguiente a tu archivo `claude_desktop_config.json`:
   "mcpServers": {
     "keytrends-wp": {
       "command": "npx",
-      "args": ["-y", "github:iDankest/keytrends-wp-mcp"],
+      "args": ["-y", "github:iDankest/keytrends-wp-mcp#<COMMIT>"],
       "env": {
         "WORDPRESS_BASE_URL": "https://tu-sitio.com",
         "WORDPRESS_USERNAME": "tu_usuario_wp",
@@ -55,7 +65,7 @@ claude mcp add keytrends-wp \
   --env WORDPRESS_BASE_URL=https://tu-sitio.com \
   --env WORDPRESS_USERNAME=tu_usuario_wp \
   --env WORDPRESS_APPLICATION_PASSWORD="xxxx xxxx xxxx xxxx" \
-  -- npx -y github:iDankest/keytrends-wp-mcp
+  -- npx -y github:iDankest/keytrends-wp-mcp#<COMMIT>
 ```
 
 ### 3. Cursor
@@ -67,7 +77,7 @@ En `~/.cursor/mcp.json` o `.cursor/mcp.json`:
   "mcpServers": {
     "keytrends-wp": {
       "command": "npx",
-      "args": ["-y", "github:iDankest/keytrends-wp-mcp"],
+      "args": ["-y", "github:iDankest/keytrends-wp-mcp#<COMMIT>"],
       "env": {
         "WORDPRESS_BASE_URL": "https://tu-sitio.com",
         "WORDPRESS_USERNAME": "tu_usuario_wp",
@@ -83,13 +93,24 @@ En `~/.cursor/mcp.json` o `.cursor/mcp.json`:
 ```toml
 [mcp_servers.keytrends-wp]
 command = "npx"
-args = ["-y", "github:iDankest/keytrends-wp-mcp"]
+args = ["-y", "github:iDankest/keytrends-wp-mcp#<COMMIT>"]
 
 [mcp_servers.keytrends-wp.env]
 WORDPRESS_BASE_URL = "https://tu-sitio.com"
 WORDPRESS_USERNAME = "tu_usuario_wp"
 WORDPRESS_APPLICATION_PASSWORD = "xxxx xxxx xxxx xxxx"
 ```
+
+### 5. Cognitiv (agentes en Slack)
+
+| Campo | Valor |
+|---|---|
+| Who can use it | `Workspace` |
+| Name | `<cliente>-wp-full` |
+| Connection | `stdio` |
+| Command | `npx` |
+| Arguments (uno por línea) | `-y` / `github:iDankest/keytrends-wp-mcp#<COMMIT>` |
+| Credentials | `BASE_URL`, `USERNAME`, `APPLICATION_PASSWORD` |
 
 ---
 
