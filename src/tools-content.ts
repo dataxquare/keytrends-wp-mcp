@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpEnv } from './env.ts';
 import { toolError } from './errors.ts';
-import { isObj, wpAnon, wpGet, wpGetAll, wpPost, WpHttpError } from './lib/wp-http.ts';
+import { isObj, wpAnon, wpGet, wpGetAll, wpPost, WpHttpError, probeAuthTransport, type AuthProbe } from './lib/wp-http.ts';
 
 export function registerContentTools(server: McpServer, env: McpEnv): void {
   // 1. wp_diagnose
@@ -78,11 +78,24 @@ export function registerContentTools(server: McpServer, env: McpEnv): void {
         out.push(`[5] GET /wp/v2/users?context=edit (autenticado): ${c5ok ? 'PASS' : 'FAIL'}`);
         out.push(`    ${c5ok ? 'status=200' : `status=${c5err?.status}, code=${c5err?.code}, detail=${c5err?.detail}`}`);
 
+        // Checks 6 y 7: sólo cuando la autenticación falló con 401, para no añadir latencia en sitios sanos.
+        let probe: AuthProbe | undefined;
+        if (!c3ok && c3err?.status === 401) {
+          probe = await probeAuthTransport(env.auth, namespaces as string[]);
+          out.push(
+            `[6] Sonda Bearer (¿llega la cabecera Authorization a PHP?): ${probe.headerReachesPhp === true ? 'SÍ' : 'INDETERMINABLE'}`,
+          );
+          out.push(`[7] Oráculo jwt-auth/v1: ${probe.oracle}${probe.detail ? ` — ${probe.detail}` : ''}`);
+        }
+
         type Verdict =
           | 'AUTH_OK'
           | 'AUTH_OK_USERS_BLOQUEADO'
           | 'AUTH_HEADER_O_CREDENCIAL'
           | 'CREDENCIAL_INVALIDA'
+          | 'USUARIO_DESCONOCIDO'
+          | 'BASIC_BLOQUEADO_JWT_OK'
+          | 'WAF_O_IP_BLOQUEADA'
           | 'ROL_INSUFICIENTE'
           | 'INDETERMINADO';
 
@@ -92,22 +105,44 @@ export function registerContentTools(server: McpServer, env: McpEnv): void {
             'La autenticación funciona (users/me y borradores responden bien), pero /wp/v2/users está bloqueado en este WordPress (rest_user_cannot_view). ' +
             'Pasa los autores como ID numérico de WordPress en vez de nombre/slug (ej: "4" o "12").',
           AUTH_HEADER_O_CREDENCIAL:
-            '1. Regenera la Application Password desde un usuario Editor o Administrador (wp-admin → Usuarios → Perfil → Contraseñas de aplicación).\n' +
-            '2. Si persiste, el servidor web está descartando la cabecera Authorization (IIS/FastCGI).',
-          CREDENCIAL_INVALIDA: 'La cabecera Authorization llega, pero el usuario o la contraseña no son válidos: regenera la Application Password.',
+            '1. Regenera la Application Password en wp-admin → Usuarios → Perfil → Contraseñas de aplicación, cópiala tal cual (los espacios no importan) y pégala en WORDPRESS_APPLICATION_PASSWORD.\n' +
+            '2. Si con una contraseña recién generada sigue fallando, el servidor web está descartando la cabecera Authorization antes de llegar a PHP. Lo tiene que aplicar quien administra el hosting: en IIS, una regla de URL Rewrite que fije HTTP_AUTHORIZATION y esa variable permitida en allowedServerVariables; en Apache/LiteSpeed, la regla equivalente en .htaccess.',
+          CREDENCIAL_INVALIDA:
+            'El usuario existe pero esa Application Password ya no es válida (revocada, regenerada o mal copiada): crea una nueva en wp-admin → Usuarios → Perfil → Contraseñas de aplicación y actualiza WORDPRESS_APPLICATION_PASSWORD.',
+          USUARIO_DESCONOCIDO:
+            'Este WordPress no reconoce ese nombre de usuario (verificado contra el validador del propio sitio). Usa el login exacto que aparece en wp-admin → Usuarios, no el nombre visible ni el email, en WORDPRESS_USERNAME.',
+          BASIC_BLOQUEADO_JWT_OK:
+            'Tu usuario y tu Application Password SON válidos: el validador del sitio los acepta. Lo que no se aplica es la autenticación Basic de la REST API, así que el problema está en el servidor o en los plugins del sitio, no en tu configuración. El hosting debe reenviar la cabecera Authorization a PHP (IIS: regla de URL Rewrite que fije HTTP_AUTHORIZATION más allowedServerVariables; Apache/LiteSpeed: la regla equivalente en .htaccess) o hay un plugin JWT interceptando Basic que debe desactivarse.',
+          WAF_O_IP_BLOQUEADA:
+            'El sitio devuelve 403 antes de llegar a WordPress: WAF/Cloudflare o IP no autorizada. Consulta tu IP actual en https://api.ipify.org y pide su alta en el canal del equipo del cliente.',
           ROL_INSUFICIENTE: 'El usuario autentica pero no tiene permisos de edición (edit_posts): sube su rol a Editor o Administrador en wp-admin.',
           INDETERMINADO: 'Ninguna combinación de comprobaciones coincide con un veredicto conocido: revisa la evidencia arriba.',
         };
+
+        const waf =
+          c1.status === 403 ||
+          c2.status === 403 ||
+          c3err?.status === 403 ||
+          c4err?.status === 403 ||
+          c5err?.status === 403;
 
         let verdict: Verdict;
         if (c3ok && c4ok && c5ok) {
           verdict = 'AUTH_OK';
         } else if (c3ok && c4ok && !c5ok && c5err?.status === 401 && c5err.code === 'rest_user_cannot_view') {
           verdict = 'AUTH_OK_USERS_BLOQUEADO';
-        } else if (!c3ok && c3err?.status === 401 && c3err.code === 'rest_not_logged_in') {
-          verdict = 'AUTH_HEADER_O_CREDENCIAL';
+        } else if (waf) {
+          verdict = 'WAF_O_IP_BLOQUEADA';
+        } else if (probe?.oracle === 'unknown_user') {
+          verdict = 'USUARIO_DESCONOCIDO';
+        } else if (probe?.oracle === 'bad_password') {
+          verdict = 'CREDENCIAL_INVALIDA';
+        } else if (probe?.oracle === 'ok') {
+          verdict = 'BASIC_BLOQUEADO_JWT_OK';
         } else if (!c3ok && c3err?.status === 401 && (c3err.code === 'incorrect_password' || c3err.code === 'invalid_username')) {
           verdict = 'CREDENCIAL_INVALIDA';
+        } else if (!c3ok && c3err?.status === 401 && c3err.code === 'rest_not_logged_in') {
+          verdict = 'AUTH_HEADER_O_CREDENCIAL';
         } else if (
           (c3ok && !c4ok && c4err?.code === 'rest_invalid_param' && c4err.detail === 'rest_forbidden_status') ||
           (c3ok && caps.edit_posts !== true)

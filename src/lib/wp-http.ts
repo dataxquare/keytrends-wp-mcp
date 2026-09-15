@@ -131,3 +131,68 @@ export async function wpAnon(
   const body = await parseJsonSafe(res);
   return { status: res.status, body };
 }
+
+export interface AuthProbe {
+  /** true = demostrado que la cabecera Authorization llega a PHP; null = no demostrable en este sitio. */
+  headerReachesPhp: boolean | null;
+  oracle: 'ok' | 'bad_password' | 'unknown_user' | 'unavailable';
+  detail: string;
+}
+
+const PROBE_TIMEOUT_MS = 8000;
+
+/**
+ * Discrimina por qué falla la autenticación cuando WordPress responde 401 rest_not_logged_in.
+ *
+ * 1. Sonda Bearer: si algún plugin JWT contesta con un código que contiene "jwt_auth",
+ *    queda demostrado que el servidor web SÍ reenvía la cabecera Authorization a PHP.
+ * 2. Oráculo: si el sitio expone jwt-auth/v1, su endpoint de token valida usuario y
+ *    Application Password recibiéndolos en el CUERPO, así que distingue credencial
+ *    revocada de usuario inexistente sin depender de la cabecera.
+ */
+export async function probeAuthTransport(auth: WpAuth, namespaces: string[]): Promise<AuthProbe> {
+  const ua = auth.userAgent ?? DEFAULT_UA;
+  let headerReachesPhp: boolean | null = null;
+
+  try {
+    const res = await fetch(buildUrl(auth.baseUrl, '/wp-json/wp/v2/users/me', { context: 'edit' }), {
+      headers: { authorization: 'Bearer probe.probe.probe', 'user-agent': ua },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    const body = await parseJsonSafe(res);
+    const code = isObj(body) && typeof body.code === 'string' ? body.code : '';
+    if (code.includes('jwt_auth')) headerReachesPhp = true;
+  } catch {
+    // Sonda best-effort: la indeterminación es un resultado válido, nunca un fallo de la tool.
+  }
+
+  if (!namespaces.includes('jwt-auth/v1')) {
+    return { headerReachesPhp, oracle: 'unavailable', detail: 'el sitio no expone jwt-auth/v1' };
+  }
+
+  let detail = '';
+  try {
+    const res = await fetch(buildUrl(auth.baseUrl, '/wp-json/jwt-auth/v1/token'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': ua },
+      body: JSON.stringify({ username: auth.user, password: auth.appPassword }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    const body = await parseJsonSafe(res);
+    const b = isObj(body) ? body : {};
+    const data = isObj(b.data) ? b.data : {};
+    // Tmeister devuelve el token en la raíz; la variante de Useful Team lo devuelve en data.token.
+    const token = typeof b.token === 'string' ? b.token : typeof data.token === 'string' ? data.token : '';
+    const code = typeof b.code === 'string' ? b.code : '';
+    if (res.ok && token) {
+      return { headerReachesPhp, oracle: 'ok', detail: 'credencial aceptada por el validador del sitio' };
+    }
+    if (code.includes('invalid_username')) return { headerReachesPhp, oracle: 'unknown_user', detail: code };
+    if (code.includes('incorrect_password')) return { headerReachesPhp, oracle: 'bad_password', detail: code };
+    detail = code || `HTTP ${res.status}`;
+  } catch (e) {
+    detail = e instanceof Error ? e.message : String(e);
+  }
+
+  return { headerReachesPhp, oracle: 'unavailable', detail };
+}

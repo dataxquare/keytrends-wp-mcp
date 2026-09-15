@@ -8,7 +8,7 @@ export function toolError(e: unknown): { content: [{ type: 'text'; text: string 
     const isHtmlOrNonJson = bodyStr.includes('<!DOCTYPE') || bodyStr.includes('<html');
 
     if (e.status === 401 && e.code === 'rest_not_logged_in') {
-      hint = 'La petición no llegó autenticada: revisa WORDPRESS_USERNAME y WORDPRESS_APPLICATION_PASSWORD en la config del servidor MCP.';
+      hint = 'La petición llegó sin autenticar. Ejecuta la tool wp_diagnose: distingue contraseña revocada, usuario inexistente, WAF/IP bloqueada y servidor que descarta la cabecera Authorization, y devuelve el remedio exacto.';
     } else if (e.status === 401 && (e.code === 'incorrect_password' || e.code === 'invalid_username')) {
       hint = 'Credencial inválida: genera una Application Password nueva en wp-admin → Usuarios → Perfil.';
     } else if (e.status === 401 && e.code === 'rest_user_cannot_view') {
