@@ -1,9 +1,13 @@
-import type { WpAuth } from './lib/wp-http.ts';
+import type { WpAuth, WpAuthMode } from './lib/wp-http.ts';
 
 export interface McpEnv {
   auth: WpAuth;
   defaultLang?: string;
   tz: string;
+}
+
+function parseAuthMode(v: string | undefined): WpAuthMode | undefined {
+  return v === 'auto' || v === 'basic' || v === 'jwt' ? v : undefined;
 }
 
 export function envConfig(): McpEnv {
@@ -44,6 +48,7 @@ export function envConfig(): McpEnv {
     user: username!,
     appPassword: appPassword!,
     userAgent: process.env.WP_USER_AGENT,
+    authMode: parseAuthMode(process.env.WP_AUTH_MODE),
   };
 
   return {

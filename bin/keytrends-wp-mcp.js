@@ -33937,6 +33937,9 @@ class StdioServerTransport {
 }
 
 // src/env.ts
+function parseAuthMode(v) {
+  return v === "auto" || v === "basic" || v === "jwt" ? v : undefined;
+}
 function envConfig() {
   const baseUrlRaw = process.env.WORDPRESS_BASE_URL || process.env.BASE_URL || process.env.WP_BASE_URL || process.env.WP_API_URL;
   const username = process.env.WORDPRESS_USERNAME || process.env.USERNAME || process.env.WP_USERNAME || process.env.WP_USER || process.env.WP_API_USERNAME;
@@ -33956,7 +33959,8 @@ function envConfig() {
     baseUrl,
     user: username,
     appPassword,
-    userAgent: process.env.WP_USER_AGENT
+    userAgent: process.env.WP_USER_AGENT,
+    authMode: parseAuthMode(process.env.WP_AUTH_MODE)
   };
   return {
     auth,
@@ -34010,14 +34014,105 @@ async function throwWpError(res) {
   const detail = (statusDetail && typeof statusDetail.code === "string" ? statusDetail.code : undefined) ?? (typeof b.message === "string" ? b.message : "");
   throw new WpHttpError(res.status, code, detail, body);
 }
-async function wpGet(auth, path, params) {
-  const ua = auth.userAgent ?? DEFAULT_UA;
-  const res = await fetch(buildUrl(auth.baseUrl, path, params), {
+var jwtTokenCache = new Map;
+var basicBrokenSites = new Set;
+var jwtNegCache = new Map;
+var JWT_NEG_TTL_MS = 5 * 60 * 1000;
+function authCacheKey(auth) {
+  return `${auth.baseUrl}|${auth.user}`;
+}
+async function fetchJwtToken(auth) {
+  const key = authCacheKey(auth);
+  const cached2 = jwtTokenCache.get(key);
+  if (cached2)
+    return cached2;
+  if (Date.now() < (jwtNegCache.get(key) ?? 0))
+    return null;
+  try {
+    const res = await fetch(buildUrl(auth.baseUrl, "/wp-json/jwt-auth/v1/token"), {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": auth.userAgent ?? DEFAULT_UA },
+      body: JSON.stringify({ username: auth.user, password: auth.appPassword }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+    });
+    const body = await parseJsonSafe(res);
+    const b = isObj(body) ? body : {};
+    const data = isObj(b.data) ? b.data : {};
+    const token = typeof b.token === "string" ? b.token : typeof data.token === "string" ? data.token : "";
+    if (res.ok && token) {
+      jwtTokenCache.set(key, token);
+      jwtNegCache.delete(key);
+      return token;
+    }
+  } catch {}
+  jwtNegCache.set(key, Date.now() + JWT_NEG_TTL_MS);
+  return null;
+}
+async function looksAnonymous(res) {
+  if (res.status === 401)
+    return true;
+  if (res.status !== 400)
+    return false;
+  const body = await parseJsonSafe(res.clone());
+  if (!isObj(body) || body.code !== "rest_invalid_param")
+    return false;
+  const data = isObj(body.data) ? body.data : {};
+  const details = isObj(data.details) ? data.details : {};
+  const status = isObj(details.status) ? details.status : {};
+  return status.code === "rest_forbidden_status";
+}
+async function wpFetch(auth, url2, init = {}) {
+  const mode = auth.authMode ?? "auto";
+  const key = authCacheKey(auth);
+  const doFetch = (token) => fetch(url2, {
+    method: init.method,
+    body: init.body,
     headers: {
-      authorization: authHeader(auth),
-      "user-agent": ua
+      authorization: token === null ? authHeader(auth) : `Bearer ${token}`,
+      "user-agent": auth.userAgent ?? DEFAULT_UA,
+      ...init.json ? { "content-type": "application/json" } : {}
     }
   });
+  const bearerWithRefresh = async () => {
+    const token = await fetchJwtToken(auth);
+    if (token === null)
+      return null;
+    const res2 = await doFetch(token);
+    if (res2.status === 401) {
+      jwtTokenCache.delete(key);
+      const fresh = await fetchJwtToken(auth);
+      if (fresh !== null && fresh !== token)
+        return doFetch(fresh);
+    }
+    return res2;
+  };
+  if (mode === "jwt") {
+    const res2 = await bearerWithRefresh();
+    if (res2 === null) {
+      throw new Error("[wp] WP_AUTH_MODE=jwt pero el sitio no expone jwt-auth/v1 o rechazó la credencial");
+    }
+    return res2;
+  }
+  if (mode === "auto" && basicBrokenSites.has(key)) {
+    const res2 = await bearerWithRefresh();
+    if (res2 !== null)
+      return res2;
+    basicBrokenSites.delete(key);
+    return doFetch(null);
+  }
+  let res = await doFetch(null);
+  if (mode === "auto" && await looksAnonymous(res)) {
+    const retry = await bearerWithRefresh();
+    if (retry !== null) {
+      if (retry.ok)
+        basicBrokenSites.add(key);
+      return retry;
+    }
+  }
+  return res;
+}
+async function wpGet(auth, path, params) {
+  const res = await wpFetch(auth, buildUrl(auth.baseUrl, path, params));
   if (!res.ok)
     return throwWpError(res);
   const data = await res.json();
@@ -34044,14 +34139,9 @@ async function wpGetAll(auth, path, params) {
   return all;
 }
 async function wpPost(auth, path, body) {
-  const ua = auth.userAgent ?? DEFAULT_UA;
-  const res = await fetch(buildUrl(auth.baseUrl, path), {
+  const res = await wpFetch(auth, buildUrl(auth.baseUrl, path), {
     method: "POST",
-    headers: {
-      authorization: authHeader(auth),
-      "content-type": "application/json",
-      "user-agent": ua
-    },
+    json: true,
     body: JSON.stringify(body)
   });
   if (!res.ok)
@@ -34098,6 +34188,7 @@ async function probeAuthTransport(auth, namespaces) {
     const token = typeof b.token === "string" ? b.token : typeof data.token === "string" ? data.token : "";
     const code = typeof b.code === "string" ? b.code : "";
     if (res.ok && token) {
+      jwtTokenCache.set(authCacheKey(auth), token);
       return { headerReachesPhp, oracle: "ok", detail: "credencial aceptada por el validador del sitio" };
     }
     if (code.includes("invalid_username"))

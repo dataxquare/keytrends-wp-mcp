@@ -3,11 +3,15 @@
  * Sin dependencias de clientes: client-agnostic vía WpAuth.
  */
 
+export type WpAuthMode = 'auto' | 'basic' | 'jwt';
+
 export interface WpAuth {
   baseUrl: string;
   user: string;
   appPassword: string;
   userAgent?: string;
+  /** Modo de autenticación contra la REST API; por defecto 'auto' (Basic con fallback Bearer). */
+  authMode?: WpAuthMode;
 }
 
 export class WpHttpError extends Error {
@@ -61,18 +65,144 @@ export async function throwWpError(res: Response): Promise<never> {
   throw new WpHttpError(res.status, code, detail, body);
 }
 
+const jwtTokenCache = new Map<string, string>();
+
+/** Sitios (baseUrl|user) donde Basic ya falló y se usa Bearer directamente. */
+const basicBrokenSites = new Set<string>();
+
+/** Fallos del oráculo (sitio sin jwt-auth/v1 o credencial mala) con TTL corto. */
+const jwtNegCache = new Map<string, number>();
+const JWT_NEG_TTL_MS = 5 * 60 * 1000;
+
+function authCacheKey(auth: WpAuth): string {
+  return `${auth.baseUrl}|${auth.user}`;
+}
+
+/**
+ * Pide (o reutiliza de la caché del proceso) un token JWT al endpoint
+ * jwt-auth/v1/token del sitio. Devuelve null si el sitio no expone el
+ * endpoint o la credencial no es válida.
+ */
+async function fetchJwtToken(auth: WpAuth): Promise<string | null> {
+  const key = authCacheKey(auth);
+  const cached = jwtTokenCache.get(key);
+  if (cached) return cached;
+  if (Date.now() < (jwtNegCache.get(key) ?? 0)) return null;
+  try {
+    const res = await fetch(buildUrl(auth.baseUrl, '/wp-json/jwt-auth/v1/token'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': auth.userAgent ?? DEFAULT_UA },
+      body: JSON.stringify({ username: auth.user, password: auth.appPassword }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    const body = await parseJsonSafe(res);
+    const b = isObj(body) ? body : {};
+    const data = isObj(b.data) ? b.data : {};
+    const token = typeof b.token === 'string' ? b.token : typeof data.token === 'string' ? data.token : '';
+    if (res.ok && token) {
+      jwtTokenCache.set(key, token);
+      jwtNegCache.delete(key);
+      return token;
+    }
+  } catch {
+    // Sin oráculo JWT o red caída: el modo auto devolverá el error original de Basic.
+  }
+  // Fallo (sin endpoint, credencial mala o red): se recuerda un rato para no
+  // repetir el POST del token en cada check contra sitios lentos.
+  jwtNegCache.set(key, Date.now() + JWT_NEG_TTL_MS);
+  return null;
+}
+
+/**
+ * ¿Tiene esta respuesta la forma de "petición anónima"? WordPress responde
+ * 401 rest_not_logged_in, pero también 400 rest_invalid_param con detalle
+ * rest_forbidden_status cuando la query pide algo (p.ej. status=draft) que
+ * un usuario sin autenticar no puede pedir.
+ */
+async function looksAnonymous(res: Response): Promise<boolean> {
+  if (res.status === 401) return true;
+  if (res.status !== 400) return false;
+  const body = await parseJsonSafe(res.clone());
+  if (!isObj(body) || body.code !== 'rest_invalid_param') return false;
+  const data = isObj(body.data) ? body.data : {};
+  const details = isObj(data.details) ? data.details : {};
+  const status = isObj(details.status) ? details.status : {};
+  return status.code === 'rest_forbidden_status';
+}
+
+/**
+ * fetch autenticado según auth.authMode:
+ * - 'basic': siempre Application Passwords Basic, sin fallback.
+ * - 'jwt': siempre Bearer con token del oráculo (falla si no está disponible).
+ * - 'auto' (por defecto): Basic primero; si la respuesta tiene forma de
+ *   petición anónima (401 o el 400 rest_forbidden_status) y el sitio expone
+ *   jwt-auth/v1, reintenta con Bearer (token cacheado en memoria del
+ *   proceso). Los sitios donde Basic falla se marcan y pasan a ir directos
+ *   a Bearer para no pagar el doble de peticiones en cada llamada.
+ */
+async function wpFetch(
+  auth: WpAuth,
+  url: string,
+  init: { method?: string; body?: string; json?: boolean } = {},
+): Promise<Response> {
+  const mode: WpAuthMode = auth.authMode ?? 'auto';
+  const key = authCacheKey(auth);
+  const doFetch = (token: string | null): Promise<Response> =>
+    fetch(url, {
+      method: init.method,
+      body: init.body,
+      headers: {
+        authorization: token === null ? authHeader(auth) : `Bearer ${token}`,
+        'user-agent': auth.userAgent ?? DEFAULT_UA,
+        ...(init.json ? { 'content-type': 'application/json' } : {}),
+      },
+    });
+  const bearerWithRefresh = async (): Promise<Response | null> => {
+    const token = await fetchJwtToken(auth);
+    if (token === null) return null;
+    const res = await doFetch(token);
+    if (res.status === 401) {
+      // Token caducado: se descarta y se reintenta una sola vez con uno fresco.
+      jwtTokenCache.delete(key);
+      const fresh = await fetchJwtToken(auth);
+      if (fresh !== null && fresh !== token) return doFetch(fresh);
+    }
+    return res;
+  };
+
+  if (mode === 'jwt') {
+    const res = await bearerWithRefresh();
+    if (res === null) {
+      throw new Error('[wp] WP_AUTH_MODE=jwt pero el sitio no expone jwt-auth/v1 o rechazó la credencial');
+    }
+    return res;
+  }
+
+  if (mode === 'auto' && basicBrokenSites.has(key)) {
+    // Sitio ya marcado: Bearer directo; si el oráculo desapareció, volver a Basic.
+    const res = await bearerWithRefresh();
+    if (res !== null) return res;
+    basicBrokenSites.delete(key);
+    return doFetch(null);
+  }
+
+  let res = await doFetch(null);
+  if (mode === 'auto' && (await looksAnonymous(res))) {
+    const retry = await bearerWithRefresh();
+    if (retry !== null) {
+      if (retry.ok) basicBrokenSites.add(key);
+      return retry;
+    }
+  }
+  return res;
+}
+
 export async function wpGet(
   auth: WpAuth,
   path: string,
   params?: Record<string, string | number>,
 ): Promise<{ data: unknown; total?: number; totalPages?: number }> {
-  const ua = auth.userAgent ?? DEFAULT_UA;
-  const res = await fetch(buildUrl(auth.baseUrl, path, params), {
-    headers: {
-      authorization: authHeader(auth),
-      'user-agent': ua,
-    },
-  });
+  const res = await wpFetch(auth, buildUrl(auth.baseUrl, path, params));
   if (!res.ok) return throwWpError(res);
   const data = await res.json();
   const total = res.headers.get('x-wp-total');
@@ -103,14 +233,9 @@ export async function wpGetAll(
 }
 
 export async function wpPost(auth: WpAuth, path: string, body: object): Promise<unknown> {
-  const ua = auth.userAgent ?? DEFAULT_UA;
-  const res = await fetch(buildUrl(auth.baseUrl, path), {
+  const res = await wpFetch(auth, buildUrl(auth.baseUrl, path), {
     method: 'POST',
-    headers: {
-      authorization: authHeader(auth),
-      'content-type': 'application/json',
-      'user-agent': ua,
-    },
+    json: true,
     body: JSON.stringify(body),
   });
   if (!res.ok) return throwWpError(res);
@@ -185,6 +310,7 @@ export async function probeAuthTransport(auth: WpAuth, namespaces: string[]): Pr
     const token = typeof b.token === 'string' ? b.token : typeof data.token === 'string' ? data.token : '';
     const code = typeof b.code === 'string' ? b.code : '';
     if (res.ok && token) {
+      jwtTokenCache.set(authCacheKey(auth), token);
       return { headerReachesPhp, oracle: 'ok', detail: 'credencial aceptada por el validador del sitio' };
     }
     if (code.includes('invalid_username')) return { headerReachesPhp, oracle: 'unknown_user', detail: code };
