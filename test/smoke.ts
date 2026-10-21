@@ -106,6 +106,7 @@ async function run(): Promise<void> {
       'wp_get_page',
       'wp_update_page',
       'wp_replace_in_page',
+      'wp_set_page_content_from_file',
       'wp_list_users',
       'wp_list_categories',
       'wp_schedule_drafts',
@@ -113,7 +114,7 @@ async function run(): Promise<void> {
     for (const exp of expected) {
       if (!names.includes(exp)) throw new Error(`Falta tool: ${exp}`);
     }
-    console.log(`✓ Las 12 tools verificadas.`);
+    console.log(`✓ Las 13 tools verificadas.`);
 
     child.kill();
     process.exit(0);

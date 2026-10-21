@@ -21976,6 +21976,8 @@ total: ${res.total}` : "";
 }
 
 // src/tools-pages.ts
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 function registerPageTools(server, env) {
   server.registerTool("wp_list_pages", {
     title: "Listar páginas de WordPress",
@@ -22190,6 +22192,47 @@ find: ${r.find.slice(0, 200)}`
         verified: saved,
         length_before: contentObj.raw.length,
         length_after: typeof content2.raw === "string" ? content2.raw.length : undefined
+      };
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }], isError: !saved };
+    } catch (e) {
+      return toolError(e);
+    }
+  });
+  server.registerTool("wp_set_page_content_from_file", {
+    title: "Sustituir el contenido de una página desde un fichero local",
+    description: "Sube como contenido de la página el fichero local indicado (HTML/bloques). Si se pasa base_sha256 y el contenido actual " + "de la página no coincide con ese hash, no se guarda nada (alguien la editó desde que se leyó).",
+    inputSchema: {
+      id: number2().int().describe("ID numérico de la página"),
+      file: string2().describe("Ruta absoluta al fichero con el nuevo contenido"),
+      base_sha256: string2().optional().describe("SHA-256 (hex) del contenido bruto sobre el que se construyó el fichero")
+    }
+  }, async ({ id, file, base_sha256 }) => {
+    try {
+      const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+      const content = await readFile(file, "utf8");
+      if (base_sha256) {
+        const res = await wpGet(env.auth, `/wp-json/wp/v2/pages/${id}`, { context: "edit" });
+        const p = isObj(res.data) ? res.data : {};
+        const contentObj = isObj(p.content) ? p.content : {};
+        const current = typeof contentObj.raw === "string" ? contentObj.raw : "";
+        if (sha(current) !== base_sha256) {
+          return {
+            content: [{ type: "text", text: `La página ${id} ha cambiado desde que se leyó (sha256 actual ${sha(current)}). No se ha guardado nada.` }],
+            isError: true
+          };
+        }
+      }
+      await wpPost(env.auth, `/wp-json/wp/v2/pages/${id}`, { content });
+      const reread = await wpGet(env.auth, `/wp-json/wp/v2/pages/${id}`, { context: "edit" });
+      const p2 = isObj(reread.data) ? reread.data : {};
+      const content2 = isObj(p2.content) ? p2.content : {};
+      const saved = content2.raw === content;
+      const out = {
+        id: p2.id,
+        status: p2.status,
+        verified: saved,
+        length: content.length,
+        sha256: typeof content2.raw === "string" ? sha(content2.raw) : undefined
       };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }], isError: !saved };
     } catch (e) {
