@@ -16,6 +16,10 @@ Diseñado para resolver las limitaciones de los conectores genéricos de WordPre
   - `wp_get_post`: Obtiene contenido íntegro y bloques Gutenberg.
   - `wp_create_post`: Crea posts especificando autor, categorías, etiquetas, slug y fecha.
   - `wp_update_post`: Modifica posts existentes con verificación automática tras edición.
+  - `wp_list_pages`: Lista páginas (no posts), incluidos borradores, filtrables por IDs, padre o búsqueda.
+  - `wp_get_page`: Obtiene contenido íntegro, plantilla y meta de una página.
+  - `wp_update_page`: Modifica páginas existentes (incluido publicarlas con `status=publish`) con verificación tras edición.
+  - `wp_replace_in_page`: Reemplazos exactos find/replace en el contenido de una página (todo o nada), sin reenviar el contenido entero.
   - `wp_list_users`: Lista usuarios y roles para resolver IDs de autores.
   - `wp_list_categories`: Lista categorías disponibles con sus slugs e IDs.
   - `wp_schedule_drafts`: **Programación masiva determinista** de posts por día, slots horarios, rotación de autores y asignación de categorías con modo simulación (`apply=false` por defecto).
