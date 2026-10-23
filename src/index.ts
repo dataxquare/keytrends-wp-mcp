@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { envConfig } from './env.ts';
 import { registerContentTools } from './tools-content.ts';
+import { registerMenuTools } from './tools-menus.ts';
 import { registerPageTools } from './tools-pages.ts';
 import { registerScheduleTools } from './tools-schedule.ts';
 
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
 
   registerContentTools(server, env);
   registerPageTools(server, env);
+  registerMenuTools(server, env);
   registerScheduleTools(server, env);
 
   const transport = new StdioServerTransport();

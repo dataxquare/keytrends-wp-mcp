@@ -242,6 +242,16 @@ export async function wpPost(auth: WpAuth, path: string, body: object): Promise<
   return res.json();
 }
 
+export async function wpDelete(
+  auth: WpAuth,
+  path: string,
+  params?: Record<string, string | number>,
+): Promise<unknown> {
+  const res = await wpFetch(auth, buildUrl(auth.baseUrl, path, params), { method: 'DELETE' });
+  if (!res.ok) return throwWpError(res);
+  return res.json();
+}
+
 export async function wpAnon(
   baseUrl: string,
   path: string,

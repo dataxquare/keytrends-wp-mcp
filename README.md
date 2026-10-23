@@ -21,6 +21,12 @@ Diseñado para resolver las limitaciones de los conectores genéricos de WordPre
   - `wp_update_page`: Modifica páginas existentes (incluido publicarlas con `status=publish`) con verificación tras edición.
   - `wp_replace_in_page`: Reemplazos exactos find/replace en el contenido de una página (todo o nada), sin reenviar el contenido entero.
   - `wp_set_page_content_from_file`: Sustituye el contenido de una página por un fichero local, con control de concurrencia opcional (`base_sha256`).
+  - `wp_list_menus`: Lista los menús de navegación con sus ubicaciones del tema, y las ubicaciones disponibles.
+  - `wp_get_menu`: Obtiene un menú y sus items como árbol (padre → hijos) o lista plana.
+  - `wp_create_menu`: Crea un menú vacío **sin asignarlo a ninguna ubicación** (no se ve en el sitio hasta asignarlo en wp-admin).
+  - `wp_add_menu_items`: Crea items en lote con jerarquía (`ref` / `parent_ref`), clases CSS y descripción.
+  - `wp_update_menu_item`: Modifica un item (texto, URL, padre, orden, clases…) con verificación tras edición.
+  - `wp_delete_menu_items`: Borra items de menú definitivamente.
   - `wp_list_users`: Lista usuarios y roles para resolver IDs de autores.
   - `wp_list_categories`: Lista categorías disponibles con sus slugs e IDs.
   - `wp_schedule_drafts`: **Programación masiva determinista** de posts por día, slots horarios, rotación de autores y asignación de categorías con modo simulación (`apply=false` por defecto).
