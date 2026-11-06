@@ -27,6 +27,8 @@ Diseñado para resolver las limitaciones de los conectores genéricos de WordPre
   - `wp_add_menu_items`: Crea items en lote con jerarquía (`ref` / `parent_ref`), clases CSS y descripción.
   - `wp_update_menu_item`: Modifica un item (texto, URL, padre, orden, clases…) con verificación tras edición.
   - `wp_delete_menu_items`: Borra items de menú definitivamente.
+  - `wp_rankmath_get_seo`: Lee el SEO efectivo de una página o post publicado (title, meta description, canonical, robots, Open Graph) desde su `<head>`.
+  - `wp_rankmath_update_seo`: Escribe los campos SEO de Rank Math (title, description, focus keyword, canonical, robots, Open Graph) vía `rankmath/v1/updateMeta` y verifica releyendo la página. `""` vuelve a la plantilla por defecto. Requiere Rank Math y un usuario con permiso para editar el contenido.
   - `wp_list_users`: Lista usuarios y roles para resolver IDs de autores.
   - `wp_list_categories`: Lista categorías disponibles con sus slugs e IDs.
   - `wp_schedule_drafts`: **Programación masiva determinista** de posts por día, slots horarios, rotación de autores y asignación de categorías con modo simulación (`apply=false` por defecto).

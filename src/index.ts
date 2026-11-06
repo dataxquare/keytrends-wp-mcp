@@ -5,6 +5,7 @@ import { envConfig } from './env.ts';
 import { registerContentTools } from './tools-content.ts';
 import { registerMenuTools } from './tools-menus.ts';
 import { registerPageTools } from './tools-pages.ts';
+import { registerRankMathTools } from './tools-rankmath.ts';
 import { registerScheduleTools } from './tools-schedule.ts';
 
 async function main(): Promise<void> {
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
   registerContentTools(server, env);
   registerPageTools(server, env);
   registerMenuTools(server, env);
+  registerRankMathTools(server, env);
   registerScheduleTools(server, env);
 
   const transport = new StdioServerTransport();

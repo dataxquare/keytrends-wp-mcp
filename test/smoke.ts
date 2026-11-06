@@ -113,6 +113,8 @@ async function run(): Promise<void> {
       'wp_add_menu_items',
       'wp_update_menu_item',
       'wp_delete_menu_items',
+      'wp_rankmath_get_seo',
+      'wp_rankmath_update_seo',
       'wp_list_users',
       'wp_list_categories',
       'wp_schedule_drafts',
